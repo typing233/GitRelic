@@ -170,11 +170,10 @@ class TerminalRenderer:
         items = items[:max_items]
 
         max_path_len = max(len(item["path"]) for item in items) if items else 0
-        path_width = min(max_path_len, 40)
-        heatmap_width = self.width - path_width - 20
+        path_width = min(max_path_len, 35)
 
         lines.append(
-            f"{ANSI_BOLD}{'Path':<{path_width}} {'Lines':>8} {'Concentration':>12} {'Primary Author'}{ANSI_RESET}"
+            f"{ANSI_BOLD}{'Path':<{path_width}} {'Heatmap':<12} {'Lines':>8} {'Conc':>6} {'Primary Author'}{ANSI_RESET}"
         )
         lines.append("-" * self.width)
 
@@ -193,18 +192,21 @@ class TerminalRenderer:
 
             author_color = author_color_map.get(primary_author, ANSI_RESET)
 
-            cell_color = self._color_heatmap_cell(concentration, primary_author)
-
-            heatmap_block = ""
             intensity = int(concentration * 8)
             blocks = "█" * intensity + "░" * (8 - intensity)
-            heatmap_block = f"{cell_color} {blocks} {ANSI_RESET}"
+
+            if concentration >= 0.7:
+                heatmap_block = f"{ANSI_BG_RED}{ANSI_WHITE} {blocks} {ANSI_RESET}"
+            elif concentration >= 0.4:
+                heatmap_block = f"{ANSI_BG_YELLOW}{ANSI_BLACK} {blocks} {ANSI_RESET}"
+            else:
+                heatmap_block = f"{ANSI_BG_GREEN}{ANSI_BLACK} {blocks} {ANSI_RESET}"
 
             conc_color = self._color_by_value(concentration, 0, 1, reverse=True)
             conc_str = f"{conc_color}{concentration * 100:.0f}%{ANSI_RESET}"
 
             lines.append(
-                f"{display_path:<{path_width + 2}} {lines_count:>8} {conc_str:>12} "
+                f"{display_path:<{path_width + 2}} {heatmap_block} {lines_count:>8} {conc_str:>6} "
                 f"{author_color}{primary_author}{ANSI_RESET}"
             )
 
@@ -340,12 +342,6 @@ class TerminalRenderer:
 
         lines.append(f"\n{ANSI_BOLD}{ANSI_UNDERLINE}TECHNICAL DEBT RADAR{ANSI_RESET}\n")
 
-        chart_width = 60
-        chart_height = 30
-
-        center_x = chart_width // 2
-        center_y = chart_height // 2
-
         metric_names = list(scores.keys())
         num_metrics = len(metric_names)
 
@@ -353,44 +349,65 @@ class TerminalRenderer:
             lines.append(f"{ANSI_BRIGHT_BLACK}No metrics available for radar chart.{ANSI_RESET}")
             return "\n".join(lines)
 
+        chart_width = 48
+        chart_height = 24
+
+        center_x = chart_width // 2
+        center_y = chart_height // 2
+
         canvas = [[" " for _ in range(chart_width)] for _ in range(chart_height)]
 
-        for radius in [5, 10, 15]:
-            for angle in range(0, 360, 5):
+        for radius in [4, 8, 12]:
+            for angle in range(0, 360, 3):
                 rad = math.radians(angle)
                 x = int(center_x + radius * 2 * math.cos(rad))
                 y = int(center_y - radius * math.sin(rad))
                 if 0 <= x < chart_width and 0 <= y < chart_height:
-                    if radius == 15:
-                        canvas[y][x] = "·"
-                    else:
+                    if canvas[y][x] == " ":
                         canvas[y][x] = "·"
 
+        axis_labels = []
         for i, metric in enumerate(metric_names):
+            score = scores.get(metric, 0)
             angle = 2 * math.pi * i / num_metrics - math.pi / 2
-            for radius in range(0, 16):
+
+            for radius in range(0, 14):
                 x = int(center_x + radius * 2 * math.cos(angle))
                 y = int(center_y - radius * math.sin(angle))
                 if 0 <= x < chart_width and 0 <= y < chart_height:
-                    if radius == 15:
+                    if radius == 13:
                         canvas[y][x] = "○"
-                    else:
+                    elif canvas[y][x] == " ":
                         canvas[y][x] = "·"
+
+            color = self._color_by_value(score, 0, 100)
+            label_radius = 16
+            label_x = int(center_x + label_radius * 2 * math.cos(angle))
+            label_y = int(center_y - label_radius * math.sin(angle))
+            
+            axis_labels.append({
+                "name": metric,
+                "score": score,
+                "color": color,
+                "label_x": label_x,
+                "label_y": label_y,
+                "angle": angle,
+            })
 
         points = []
         for i, metric in enumerate(metric_names):
             score = scores.get(metric, 0)
             angle = 2 * math.pi * i / num_metrics - math.pi / 2
-            radius = score / 100 * 15
+            radius = score / 100 * 12
             x = int(center_x + radius * 2 * math.cos(angle))
             y = int(center_y - radius * math.sin(angle))
-            points.append((x, y, score))
+            points.append((x, y, score, metric))
             if 0 <= x < chart_width and 0 <= y < chart_height:
                 canvas[y][x] = "●"
 
         for i in range(len(points)):
-            x1, y1, _ = points[i]
-            x2, y2, _ = points[(i + 1) % len(points)]
+            x1, y1, _, _ = points[i]
+            x2, y2, _, _ = points[(i + 1) % len(points)]
 
             steps = max(abs(x2 - x1), abs(y2 - y1))
             if steps == 0:
@@ -401,22 +418,11 @@ class TerminalRenderer:
                 x = int(x1 + t * (x2 - x1))
                 y = int(y1 + t * (y2 - y1))
                 if 0 <= x < chart_width and 0 <= y < chart_height:
-                    if canvas[y][x] == " ":
+                    if canvas[y][x] in (" ", "·"):
                         canvas[y][x] = "○"
 
-        for i, metric in enumerate(metric_names):
-            score = scores.get(metric, 0)
-            angle = 2 * math.pi * i / num_metrics - math.pi / 2
-            radius = 18
-
-            label_x = int(center_x + radius * 2 * math.cos(angle))
-            label_y = int(center_y - radius * math.sin(angle))
-
-            color = self._color_by_value(score, 0, 100)
-            label = f"{color}{metric}: {score:.0f}{ANSI_RESET}"
-
         colored_lines = []
-        for row in canvas:
+        for row_idx, row in enumerate(canvas):
             colored_row = []
             for char in row:
                 if char == "●":
@@ -428,6 +434,29 @@ class TerminalRenderer:
                 else:
                     colored_row.append(char)
             colored_lines.append("".join(colored_row))
+
+        for label in axis_labels:
+            angle = label["angle"]
+            row_idx = int(center_y - 14 * math.sin(angle))
+            
+            if 0 <= row_idx < len(colored_lines):
+                metric_name = label["name"]
+                score = label["score"]
+                color = label["color"]
+                
+                deg = math.degrees(angle)
+                if -90 <= deg < -45 or 315 <= deg <= 360:
+                    label_text = f" {color}{metric_name}: {score:.0f}{ANSI_RESET}"
+                    colored_lines[row_idx] = colored_lines[row_idx].rstrip() + label_text
+                elif -45 <= deg < 45:
+                    label_text = f"{color}{metric_name}: {score:.0f}{ANSI_RESET} "
+                    colored_lines[row_idx] = label_text + colored_lines[row_idx]
+                elif 45 <= deg < 135:
+                    label_text = f"{color}{metric_name}: {score:.0f}{ANSI_RESET} "
+                    colored_lines[row_idx] = label_text + colored_lines[row_idx]
+                else:
+                    label_text = f" {color}{metric_name}: {score:.0f}{ANSI_RESET}"
+                    colored_lines[row_idx] = colored_lines[row_idx].rstrip() + label_text
 
         lines.extend(colored_lines)
 
