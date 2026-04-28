@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitrelic"
+version = "0.1.0"
+description = "A command-line tool for analyzing Git repositories, generating code ownership heatmaps, zombie function detection, TODO tracking, and technical debt radar charts using ANSI terminal output."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    { name = "GitRelic Team" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Version Control :: Git",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "click>=8.0",
+]
+
+[project.scripts]
+gitrelic = "gitrelic.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/example/gitrelic"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gitrelic*"]
+
+[tool.setuptools.package-data]
+gitrelic = ["*.py"]
