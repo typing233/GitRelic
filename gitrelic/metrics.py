@@ -358,7 +358,7 @@ class MetricsCalculator:
         if total_weight == 0:
             return 50.0
 
-        return weighted_sum / total_weight * (1.0 / total_weight if total_weight != 1.0 else 1.0)
+        return weighted_sum / total_weight
 
     def generate_recommendations(
         self,
