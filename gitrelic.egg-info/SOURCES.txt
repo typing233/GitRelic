@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+gitrelic/__init__.py
+gitrelic/cli.py
+gitrelic/git_data.py
+gitrelic/metrics.py
+gitrelic/ownership.py
+gitrelic/renderer.py
+gitrelic/todo_tracker.py
+gitrelic/zombie.py
+gitrelic.egg-info/PKG-INFO
+gitrelic.egg-info/SOURCES.txt
+gitrelic.egg-info/dependency_links.txt
+gitrelic.egg-info/entry_points.txt
+gitrelic.egg-info/requires.txt
+gitrelic.egg-info/top_level.txt
