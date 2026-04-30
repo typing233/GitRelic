@@ -133,7 +133,7 @@ class OwnershipAnalyzer:
         """
         all_files = self.extractor.get_all_files()
 
-        directory = DirectoryOwnership(directory_path=directory_path if directory_path else "/")
+        directory = DirectoryOwnership(directory_path=directory_path)
 
         dir_prefix = directory_path + "/" if directory_path else ""
         files_in_dir = []
@@ -211,11 +211,16 @@ class OwnershipAnalyzer:
         ) -> List[Dict]:
             result = []
             
-            full_path = parent_path + dir_obj.directory_path if parent_path else dir_obj.directory_path
+            if parent_path:
+                full_path = parent_path.rstrip("/") + "/" + dir_obj.directory_path
+            else:
+                full_path = dir_obj.directory_path
             
+            display_path = full_path if full_path else "/"
+
             if dir_obj.total_files > 0:
                 result.append({
-                    "path": full_path,
+                    "path": display_path,
                     "type": "directory",
                     "depth": current_depth,
                     "total_lines": dir_obj.total_lines,
@@ -226,9 +231,12 @@ class OwnershipAnalyzer:
                 })
 
             for file_own in dir_obj.files:
-                file_path = full_path.rstrip("/") + "/" + file_own.file_path.split("/")[-1]
+                if full_path:
+                    file_display_path = full_path.rstrip("/") + "/" + file_own.file_path.split("/")[-1]
+                else:
+                    file_display_path = file_own.file_path.split("/")[-1]
                 result.append({
-                    "path": file_path,
+                    "path": file_display_path,
                     "type": "file",
                     "depth": current_depth + 1,
                     "total_lines": file_own.total_lines,
@@ -243,7 +251,7 @@ class OwnershipAnalyzer:
                         flatten_directory(
                             subdir_obj, 
                             current_depth + 1, 
-                            full_path.rstrip("/") + "/"
+                            full_path + "/" if full_path else ""
                         )
                     )
 

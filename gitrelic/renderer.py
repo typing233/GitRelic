@@ -203,10 +203,11 @@ class TerminalRenderer:
                 heatmap_block = f"{ANSI_BG_GREEN}{ANSI_BLACK} {blocks} {ANSI_RESET}"
 
             conc_color = self._color_by_value(concentration, 0, 1, reverse=True)
-            conc_str = f"{conc_color}{concentration * 100:.0f}%{ANSI_RESET}"
+            conc_plain = f"{concentration * 100:.0f}%"
+            conc_str = f"{conc_color}{conc_plain:>6}{ANSI_RESET}"
 
             lines.append(
-                f"{display_path:<{path_width + 2}} {heatmap_block} {lines_count:>8} {conc_str:>6} "
+                f"{display_path:<{path_width + 2}} {heatmap_block} {lines_count:>8} {conc_str} "
                 f"{author_color}{primary_author}{ANSI_RESET}"
             )
 

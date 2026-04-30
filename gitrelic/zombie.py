@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Iterator
 
 
 @dataclass
@@ -41,11 +41,11 @@ class LanguagePatterns:
 
     PYTHON = {
         "function_def": re.compile(
-            r"^\s*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
+            r"^[ \t]*def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
             re.MULTILINE
         ),
         "class_def": re.compile(
-            r"^\s*class\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+            r"^[ \t]*class\s+([a-zA-Z_][a-zA-Z0-9_]*)",
             re.MULTILINE
         ),
         "function_call": re.compile(
@@ -70,7 +70,7 @@ class LanguagePatterns:
             re.MULTILINE
         ),
         "class_method": re.compile(
-            r"^\s+(?:async\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(",
+            r"^[ \t]+(?:async\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(",
             re.MULTILINE
         ),
         "function_call": re.compile(
@@ -90,11 +90,11 @@ class LanguagePatterns:
 
     GO = {
         "function_def": re.compile(
-            r"^\s*(?:func\s+(?:\([^)]+\)\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\()",
+            r"^[ \t]*(?:func\s+(?:\([^)]+\)\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\()",
             re.MULTILINE
         ),
         "method_def": re.compile(
-            r"^\s*func\s+\(\s*\*?([a-zA-Z_][a-zA-Z0-9_]*)\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
+            r"^[ \t]*func\s+\(\s*\*?([a-zA-Z_][a-zA-Z0-9_]*)\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(",
             re.MULTILINE
         ),
         "function_call": re.compile(
@@ -164,18 +164,21 @@ class ZombieScanner:
     def _remove_comments_and_strings(self, content: str, patterns: Dict) -> str:
         """Remove comments and strings from content to avoid false positives.
 
+        Newlines inside comments and strings are preserved so that line numbers
+        calculated from the cleaned content remain accurate.
+
         Args:
             content: File content.
             patterns: Language patterns dict.
 
         Returns:
-            Content with comments and strings replaced by spaces.
+            Content with comments and strings replaced by spaces (newlines kept).
         """
-        result = content
+        def _blank_keep_newlines(match: re.Match) -> str:
+            return re.sub(r"[^\n]", " ", match.group(0))
 
-        result = patterns["comment"].sub(" ", result)
-
-        result = patterns["string"].sub(" ", result)
+        result = patterns["comment"].sub(_blank_keep_newlines, content)
+        result = patterns["string"].sub(_blank_keep_newlines, result)
 
         return result
 
@@ -215,7 +218,7 @@ class ZombieScanner:
                             break
 
                 if func_name and func_name.strip():
-                    line_number = content[:match.start()].count("\n") + 1
+                    line_number = clean_content[:match.start()].count("\n") + 1
                     
                     is_public = patterns["is_public"](func_name)
 
@@ -233,7 +236,7 @@ class ZombieScanner:
                 for match in class_matches:
                     func_name = match.group(1)
                     if func_name and func_name.strip() and func_name != "constructor":
-                        line_number = content[:match.start()].count("\n") + 1
+                        line_number = clean_content[:match.start()].count("\n") + 1
                         func_info = FunctionInfo(
                             name=func_name,
                             file_path=str(Path(file_path).relative_to(self.repo_path)),
@@ -304,7 +307,7 @@ class ZombieScanner:
             pass
 
         try:
-            mtime = os.path.getmtime(file_path)
+            mtime = os.path.getmtime(self.repo_path / file_path)
             return datetime.fromtimestamp(mtime)
         except Exception:
             pass
@@ -333,6 +336,9 @@ class ZombieScanner:
         all_functions: Dict[str, FunctionInfo] = {}
         all_calls: Set[str] = set()
 
+        # Cache last-modified per file to avoid redundant git-blame calls.
+        file_last_modified: Dict[str, Optional[datetime]] = {}
+
         for file_path in files:
             full_path = self.repo_path / file_path
             
@@ -344,15 +350,18 @@ class ZombieScanner:
             result.languages_found.add(language)
             result.files_analyzed += 1
 
+            # Compute the file's last-modified date once.
+            last_modified = self._get_file_last_modified(file_path)
+            file_last_modified[file_path] = last_modified
+
             functions = self._extract_functions(str(full_path), patterns, language)
             for func in functions:
                 func_key = f"{func.file_path}:{func.name}"
                 all_functions[func_key] = func
                 result.total_functions += 1
 
-                last_modified = self._get_file_last_modified(func.file_path)
                 func.last_modified = last_modified
-                
+
                 if last_modified and last_modified >= self.cutoff_date:
                     func.is_modified_recently = True
 

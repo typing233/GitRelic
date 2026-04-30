@@ -125,7 +125,7 @@ class GitDataExtractor:
             commit_hash, author, author_email, date_str, message = parts
             
             try:
-                dt = datetime.fromisoformat(date_str)
+                dt = datetime.strptime(date_str.strip(), "%Y-%m-%d %H:%M:%S %z")
                 date = dt.replace(tzinfo=None)
             except (ValueError, IndexError):
                 date = datetime.now()
