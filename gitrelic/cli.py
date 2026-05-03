@@ -6,6 +6,7 @@ allowing users to analyze Git repositories with a single command.
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -28,7 +29,7 @@ from .renderer import (
     ANSI_BRIGHT_BLACK,
 )
 from .replay import ReplayAnalyzer, ReplayController, ReplaySnapshot
-from .collaboration import CollaborationAnalyzer, ASCIINetworkRenderer
+from .collaboration import CollaborationAnalyzer, ASCIINetworkRenderer, CollaborationNetwork
 
 
 def print_header(text: str) -> None:
@@ -683,12 +684,41 @@ def replay_cmd(
     default=1,
     help="Minimum shared files for collaboration (default: 1)"
 )
+@click.option(
+    "-d", "--detail",
+    is_flag=True,
+    help="Show detailed mode with collaboration indices"
+)
+@click.option(
+    "-e", "--expand",
+    type=int,
+    default=None,
+    help="Expand collaboration #N to show all shared files"
+)
+@click.option(
+    "-i", "--interactive",
+    is_flag=True,
+    help="Enter interactive exploration mode"
+)
 @pass_context
-def network_cmd(ctx: Context, months: Optional[int], min_shared: int):
+def network_cmd(
+    ctx: Context, 
+    months: Optional[int], 
+    min_shared: int,
+    detail: bool,
+    expand: Optional[int],
+    interactive: bool,
+):
     """Show developer collaboration network diagram.
     
     Analyzes which developers frequently modify the same files
     and visualizes their collaboration relationships.
+    
+    Interactive Mode Controls:
+      [number]  - Expand collaboration by index
+      [r/R]     - Refresh/return to overview
+      [a/A]     - Show all collaborations
+      [q/Q]     - Quit
     """
     print_banner()
     
@@ -708,10 +738,102 @@ def network_cmd(ctx: Context, months: Optional[int], min_shared: int):
     
     renderer = ASCIINetworkRenderer(width=ctx.terminal_width)
     
-    click.clear()
-    print_banner()
+    if interactive:
+        _run_interactive_network_mode(network, renderer, ctx)
+    else:
+        click.clear()
+        print_banner()
+        
+        click.echo(
+            renderer.render_network(
+                network, 
+                show_details=detail,
+                expand_index=expand,
+            )
+        )
+
+
+def _run_interactive_network_mode(
+    network: CollaborationNetwork,
+    renderer: ASCIINetworkRenderer,
+    ctx,
+):
+    """Run interactive network exploration mode.
     
-    click.echo(renderer.render_network(network))
+    Args:
+        network: The collaboration network data.
+        renderer: The network renderer.
+        ctx: The click context.
+    """
+    current_expand: Optional[int] = None
+    show_all_collabs: bool = False
+    
+    while True:
+        click.clear()
+        print_banner()
+        
+        click.echo(
+            renderer.render_network(
+                network, 
+                show_details=True,
+                expand_index=current_expand,
+            )
+        )
+        
+        click.echo("")
+        click.echo(f"{ANSI_BOLD}  ╔══════════════════════════════════════════════════════╗{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ║{ANSI_RESET}  {ANSI_CYAN}INTERACTIVE MODE{ANSI_RESET}                                       {ANSI_BOLD}║{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ╠══════════════════════════════════════════════════════╣{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ║{ANSI_RESET}  [1-{len(network.collaborations)}]  Expand collaboration by index             {ANSI_BOLD}║{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ║{ANSI_RESET}  [R/r]       Refresh/Reset view                        {ANSI_BOLD}║{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ║{ANSI_RESET}  [A/a]       Show all collaborations (detailed)        {ANSI_BOLD}║{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ║{ANSI_RESET}  [Q/q]       Quit                                      {ANSI_BOLD}║{ANSI_RESET}")
+        click.echo(f"{ANSI_BOLD}  ╚══════════════════════════════════════════════════════╝{ANSI_RESET}")
+        
+        if current_expand is not None:
+            click.echo(f"\n  {ANSI_BRIGHT_BLACK}Currently expanded: Collaboration #{current_expand}{ANSI_RESET}")
+        
+        click.echo(f"\n  {ANSI_CYAN}Enter command:{ANSI_RESET} ", nl=False)
+        
+        try:
+            user_input = input().strip().lower()
+            
+            if not user_input:
+                continue
+            
+            if user_input in ('q', 'quit', 'exit'):
+                click.echo(f"\n{ANSI_CYAN}Exiting interactive mode...{ANSI_RESET}")
+                break
+            
+            elif user_input in ('r', 'reset', 'refresh'):
+                current_expand = None
+                show_all_collabs = False
+                continue
+            
+            elif user_input in ('a', 'all'):
+                show_all_collabs = True
+                current_expand = None
+                continue
+            
+            elif user_input.isdigit():
+                idx = int(user_input)
+                if 1 <= idx <= len(network.collaborations):
+                    current_expand = idx
+                    show_all_collabs = False
+                else:
+                    click.echo(f"\n{ANSI_RED}Error: Invalid index. Must be between 1 and {len(network.collaborations)}{ANSI_RESET}")
+                    time.sleep(1.5)
+                continue
+            
+            else:
+                click.echo(f"\n{ANSI_YELLOW}Unknown command: '{user_input}'{ANSI_RESET}")
+                time.sleep(1.0)
+                
+        except KeyboardInterrupt:
+            click.echo(f"\n\n{ANSI_CYAN}Exiting interactive mode...{ANSI_RESET}")
+            break
+        except EOFError:
+            break
 
 
 @cli.command("bus-factor")

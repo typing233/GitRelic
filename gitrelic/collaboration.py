@@ -377,22 +377,36 @@ class ASCIINetworkRenderer:
         self,
         network: CollaborationNetwork,
         show_all_authors: bool = True,
+        show_details: bool = False,
+        expand_index: Optional[int] = None,
     ) -> str:
         """Render the collaboration network as an ASCII diagram.
         
         Args:
             network: CollaborationNetwork to render.
             show_all_authors: Whether to include all authors or just connected ones.
+            show_details: Whether to show detailed file information.
+            expand_index: Optional index of collaboration to expand (1-based).
         
         Returns:
             String containing the ASCII diagram with ANSI colors.
         """
         lines = []
         
+        title = "DEVELOPER COLLABORATION NETWORK"
+        if show_details:
+            title += " [DETAILED MODE]"
+        if expand_index is not None:
+            title += f" [EXPANDED: #{expand_index}]"
+        
+        title_padding = self.width - 34 - len(title) + len("DEVELOPER COLLABORATION NETWORK")
+        
         lines.append(f"\n{self.ANSI_BOLD}┌{'─' * (self.width - 2)}┐{self.ANSI_RESET}")
-        lines.append(f"{self.ANSI_BOLD}│{self.ANSI_RESET}  "
-                     f"{self.ANSI_CYAN}{self.ANSI_BOLD}DEVELOPER COLLABORATION NETWORK{self.ANSI_RESET}"
-                     f"{' ' * (self.width - 34)}{self.ANSI_BOLD}│{self.ANSI_RESET}")
+        lines.append(
+            f"{self.ANSI_BOLD}│{self.ANSI_RESET}  "
+            f"{self.ANSI_CYAN}{self.ANSI_BOLD}{title}{self.ANSI_RESET}"
+            f"{' ' * max(0, title_padding)}{self.ANSI_BOLD}│{self.ANSI_RESET}"
+        )
         lines.append(f"{self.ANSI_BOLD}└{'─' * (self.width - 2)}┘{self.ANSI_RESET}")
         lines.append("")
         
@@ -407,10 +421,17 @@ class ASCIINetworkRenderer:
             for i, author in enumerate(authors)
         }
         
-        if len(authors) <= 8:
+        if len(authors) <= 8 and not show_details:
             diagram = self._render_circular_layout(authors, network.collaborations, author_color_map)
         else:
-            diagram = self._render_compact_layout(authors, network.collaborations, author_color_map)
+            expand_idx_0 = expand_index - 1 if expand_index is not None else None
+            diagram = self._render_compact_layout(
+                authors, 
+                network.collaborations, 
+                author_color_map,
+                show_details=show_details,
+                expand_collab_index=expand_idx_0,
+            )
         
         lines.extend(diagram)
         lines.append("")
@@ -426,7 +447,7 @@ class ASCIINetworkRenderer:
         
         lines.append("")
         
-        if network.collaborations:
+        if not show_details and network.collaborations:
             lines.append(f"{self.ANSI_BOLD}  Strongest Collaborations:{self.ANSI_RESET}")
             
             max_score = max(c.collaboration_score for c in network.collaborations) if network.collaborations else 1
@@ -455,6 +476,12 @@ class ASCIINetworkRenderer:
                         lines.append(f"      {self.ANSI_CYAN}•{self.ANSI_RESET} {display_path}")
                     if len(collab.shared_file_list) > 5:
                         lines.append(f"      {self.ANSI_BRIGHT_BLACK}... and {len(collab.shared_file_list) - 5} more files{self.ANSI_RESET}")
+        
+        if show_details:
+            lines.append("")
+            lines.append(f"  {self.ANSI_BRIGHT_BLACK}💡 Tips:{self.ANSI_RESET}")
+            lines.append(f"    • Use --expand=N to show all files for collaboration #N")
+            lines.append(f"    • Use --interactive for interactive exploration mode")
         
         return "\n".join(lines)
     
@@ -571,6 +598,8 @@ class ASCIINetworkRenderer:
         authors: List[str],
         collaborations: List[AuthorCollaboration],
         author_color_map: Dict[str, str],
+        show_details: bool = False,
+        expand_collab_index: Optional[int] = None,
     ) -> List[str]:
         """Render a compact layout for larger numbers of authors.
         
@@ -578,6 +607,8 @@ class ASCIINetworkRenderer:
             authors: List of author names.
             collaborations: List of collaboration pairs.
             author_color_map: Mapping of authors to colors.
+            show_details: Whether to show detailed file information.
+            expand_collab_index: Optional index of collaboration to expand.
         
         Returns:
             List of strings representing the diagram.
@@ -588,54 +619,114 @@ class ASCIINetworkRenderer:
         lines.append("")
         
         collab_matrix: Dict[str, Dict[str, AuthorCollaboration]] = {}
-        for collab in collaborations:
+        collab_index_map: Dict[Tuple[str, str], int] = {}
+        
+        for idx, collab in enumerate(collaborations):
             if collab.author1 not in collab_matrix:
                 collab_matrix[collab.author1] = {}
             if collab.author2 not in collab_matrix:
                 collab_matrix[collab.author2] = {}
             collab_matrix[collab.author1][collab.author2] = collab
             collab_matrix[collab.author2][collab.author1] = collab
+            collab_index_map[collab.get_pair_key()] = idx
         
         max_authors_to_show = min(len(authors), 15)
         displayed_authors = authors[:max_authors_to_show]
         
-        lines.append(
-            "  " + " " * 12 + 
-            " ".join(f"{i+1:2}" for i in range(len(displayed_authors)))
-        )
-        lines.append("  " + " " * 12 + "─" * (len(displayed_authors) * 3))
+        lines.append(f"  {self.ANSI_BRIGHT_BLACK}[Matrix Legend: Position (Row,Col) = Author pair]{self.ANSI_RESET}")
+        lines.append("")
+        
+        header_line = "  " + " " * 14
+        for i in range(len(displayed_authors)):
+            header_line += f"{i+1:3}"
+        lines.append(header_line)
+        
+        divider = "  " + " " * 14 + "─" * (len(displayed_authors) * 3)
+        lines.append(divider)
+        
+        collab_list: List[Tuple[int, int, AuthorCollaboration]] = []
         
         for i, author1 in enumerate(displayed_authors):
             color = author_color_map.get(author1, self.ANSI_CYAN)
             
-            row = f"  {color}{i+1:2}. {author1[:8]:<8}{self.ANSI_RESET} │"
+            row = f"  {color}{i+1:2}. {author1[:10]:<10}{self.ANSI_RESET} │"
             
             for j, author2 in enumerate(displayed_authors):
                 if i == j:
-                    row += " ●"
+                    row += " ● "
                 else:
                     collab = collab_matrix.get(author1, {}).get(author2)
                     if collab:
+                        pair_key = collab.get_pair_key()
+                        collab_idx = collab_index_map.get(pair_key, -1)
+                        
                         if collab.shared_files >= 5:
-                            row += f" {self.ANSI_GREEN}█{self.ANSI_RESET}"
+                            cell_color = self.ANSI_GREEN
+                            cell_char = "█"
                         elif collab.shared_files >= 2:
-                            row += f" {self.ANSI_YELLOW}▓{self.ANSI_RESET}"
+                            cell_color = self.ANSI_YELLOW
+                            cell_char = "▓"
                         else:
-                            row += f" {self.ANSI_BRIGHT_BLACK}·{self.ANSI_RESET}"
+                            cell_color = self.ANSI_BRIGHT_BLACK
+                            cell_char = "·"
+                        
+                        if show_details and collab_idx >= 0:
+                            row += f"{cell_color}{collab_idx+1:>2}{cell_char}{self.ANSI_RESET}"
+                        else:
+                            row += f" {cell_color}{cell_char}{self.ANSI_RESET} "
+                        
+                        collab_list.append((i, j, collab))
                     else:
-                        row += "  "
+                        row += "   "
             
             lines.append(row)
         
         lines.append("")
         lines.append(f"  {self.ANSI_BRIGHT_BLACK}Legend:{self.ANSI_RESET}")
-        lines.append(f"    {self.ANSI_GREEN}█{self.ANSI_RESET} Strong collaboration (5+ files)")
-        lines.append(f"    {self.ANSI_YELLOW}▓{self.ANSI_RESET} Moderate collaboration (2-4 files)")
-        lines.append(f"    {self.ANSI_BRIGHT_BLACK}·{self.ANSI_RESET} Weak collaboration (1 file)")
+        
+        if show_details:
+            lines.append(f"    [N█] Number = Collaboration index (use to expand)")
+            lines.append(f"    {self.ANSI_GREEN}█{self.ANSI_RESET} Strong (5+ files)  |  "
+                        f"{self.ANSI_YELLOW}▓{self.ANSI_RESET} Moderate (2-4)  |  "
+                        f"{self.ANSI_BRIGHT_BLACK}·{self.ANSI_RESET} Weak (1)")
+        else:
+            lines.append(f"    {self.ANSI_GREEN}█{self.ANSI_RESET} Strong collaboration (5+ files)")
+            lines.append(f"    {self.ANSI_YELLOW}▓{self.ANSI_RESET} Moderate collaboration (2-4 files)")
+            lines.append(f"    {self.ANSI_BRIGHT_BLACK}·{self.ANSI_RESET} Weak collaboration (1 file)")
+            lines.append("")
+            lines.append(f"  💡 Tip: Use --detail to show collaboration indices for expansion")
         
         if len(authors) > max_authors_to_show:
             lines.append("")
             lines.append(f"  ... and {len(authors) - max_authors_to_show} more authors")
+        
+        if show_details and collaborations:
+            lines.append("")
+            lines.append(f"  {self.ANSI_BOLD}─── Collaboration Details (Indexed) ───{self.ANSI_RESET}")
+            lines.append("")
+            
+            for idx, collab in enumerate(collaborations[:15]):
+                color1 = author_color_map.get(collab.author1, self.ANSI_CYAN)
+                color2 = author_color_map.get(collab.author2, self.ANSI_GREEN)
+                
+                is_expanded = (expand_collab_index is not None and idx == expand_collab_index)
+                
+                lines.append(
+                    f"  {self.ANSI_BOLD}[{idx+1:2}]{self.ANSI_RESET} "
+                    f"{color1}{collab.author1:<15}{self.ANSI_RESET} "
+                    f"{self.ANSI_BRIGHT_BLACK}⟷{self.ANSI_RESET} "
+                    f"{color2}{collab.author2:<15}{self.ANSI_RESET} "
+                    f"| {collab.shared_files:3} files | {collab.shared_commits:3} commits"
+                )
+                
+                if is_expanded:
+                    lines.append(f"      {self.ANSI_CYAN}Shared files:{self.ANSI_RESET}")
+                    for file_path in collab.shared_file_list:
+                        display_path = file_path
+                        if len(display_path) > 55:
+                            display_path = "..." + display_path[-52:]
+                        lines.append(f"        • {display_path}")
+                    lines.append("")
         
         return lines
     
