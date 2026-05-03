@@ -158,18 +158,86 @@ class IncrementalOwnershipTracker:
 class IncrementalZombieTracker:
     """Tracks zombie function candidates incrementally.
     
-    Note: This is a simplified version that tracks file modification
-    dates rather than actual function-level analysis for performance.
+    This tracker uses real function-level analysis from ZombieScanner
+    as a baseline, then tracks changes incrementally based on commit history.
     """
     
-    def __init__(self, days_threshold: int = 90):
+    def __init__(
+        self, 
+        days_threshold: int = 90,
+        repo_path: Optional[str] = None,
+    ):
         self.days_threshold = days_threshold
+        self.repo_path = repo_path
+        
         self.file_last_modified: Dict[str, datetime] = {}
         self.file_commit_count: Dict[str, int] = {}
         self.all_files: Set[str] = set()
+        
+        self._baseline_loaded = False
+        self._baseline_zombie_functions: List = []
+        self._baseline_total_functions: int = 0
+        self._baseline_zombie_count: int = 0
+        self._file_function_count: Dict[str, int] = {}
+        self._file_zombie_count: Dict[str, int] = {}
+    
+    def load_baseline(self) -> None:
+        """Load baseline zombie analysis using real ZombieScanner.
+        
+        This runs the actual function-level analysis on the current
+        codebase to get accurate zombie function data.
+        """
+        if not self.repo_path:
+            return
+        
+        try:
+            from .zombie import ZombieScanner
+            
+            scanner = ZombieScanner(
+                repo_path=self.repo_path,
+                days_threshold=self.days_threshold,
+            )
+            
+            result = scanner.scan()
+            
+            self._baseline_zombie_functions = result.zombie_functions
+            self._baseline_total_functions = result.total_functions
+            self._baseline_zombie_count = len(result.zombie_functions)
+            
+            for func in result.zombie_functions:
+                file_path = func.file_path
+                self._file_zombie_count[file_path] = self._file_zombie_count.get(file_path, 0) + 1
+            
+            for file_path, func_count in self._count_functions_per_file(result).items():
+                self._file_function_count[file_path] = func_count
+            
+            self._baseline_loaded = True
+            
+        except Exception:
+            pass
+    
+    def _count_functions_per_file(self, result) -> Dict[str, int]:
+        """Count functions per file from scan result.
+        
+        Args:
+            result: ZombieScanResult from scanner.
+        
+        Returns:
+            Dictionary mapping file paths to function counts.
+        """
+        file_func_count: Dict[str, int] = {}
+        
+        for func in result.zombie_functions:
+            file_path = func.file_path
+            file_func_count[file_path] = file_func_count.get(file_path, 0) + 1
+        
+        return file_func_count
     
     def process_commit(self, commit: GitCommit) -> None:
         """Process a commit and update file modification tracking.
+        
+        When a file is modified in a commit, it's no longer considered
+        stale/zombie until the days_threshold passes again.
         
         Args:
             commit: The commit to process.
@@ -178,9 +246,15 @@ class IncrementalZombieTracker:
             self.all_files.add(file_path)
             self.file_last_modified[file_path] = commit.date
             self.file_commit_count[file_path] = self.file_commit_count.get(file_path, 0) + 1
+            
+            if file_path in self._file_zombie_count:
+                self._file_zombie_count[file_path] = 0
     
     def get_zombie_summary(self, reference_date: Optional[datetime] = None) -> Dict:
-        """Get a summary of potential zombie files.
+        """Get a summary of zombie functions.
+        
+        This uses the baseline analysis from ZombieScanner if available,
+        otherwise falls back to file-based estimation.
         
         Args:
             reference_date: Date to use as "now" for age calculation.
@@ -194,6 +268,71 @@ class IncrementalZombieTracker:
         
         cutoff_date = reference_date - timedelta(days=self.days_threshold)
         
+        if self._baseline_loaded:
+            return self._get_baseline_based_summary(cutoff_date, reference_date)
+        
+        return self._get_file_based_summary(cutoff_date, reference_date)
+    
+    def _get_baseline_based_summary(
+        self, 
+        cutoff_date: datetime, 
+        reference_date: datetime
+    ) -> Dict:
+        """Get summary using baseline function-level analysis.
+        
+        Args:
+            cutoff_date: Date before which files are considered stale.
+            reference_date: The reference "now" date.
+        
+        Returns:
+            Dictionary with zombie summary data.
+        """
+        active_zombie_count = 0
+        active_zombie_files: List[str] = []
+        
+        for file_path, zombie_funcs in self._file_zombie_count.items():
+            if zombie_funcs > 0:
+                last_modified = self.file_last_modified.get(file_path)
+                
+                if last_modified and last_modified < cutoff_date:
+                    active_zombie_count += zombie_funcs
+                    active_zombie_files.append(file_path)
+                elif not last_modified:
+                    active_zombie_count += zombie_funcs
+                    active_zombie_files.append(file_path)
+        
+        total_functions = self._baseline_total_functions
+        if total_functions == 0:
+            total_functions = 1
+        
+        zombie_rate = (active_zombie_count / total_functions * 100) if total_functions > 0 else 0
+        
+        return {
+            "total_functions": total_functions,
+            "zombie_functions": active_zombie_count,
+            "zombie_files": len(active_zombie_files),
+            "zombie_file_paths": active_zombie_files[:20],
+            "zombie_rate": zombie_rate,
+            "days_threshold": self.days_threshold,
+            "is_baseline_based": True,
+            "baseline_total_functions": self._baseline_total_functions,
+            "baseline_zombie_functions": self._baseline_zombie_count,
+        }
+    
+    def _get_file_based_summary(
+        self, 
+        cutoff_date: datetime, 
+        reference_date: datetime
+    ) -> Dict:
+        """Get summary using file-based estimation (fallback).
+        
+        Args:
+            cutoff_date: Date before which files are considered stale.
+            reference_date: The reference "now" date.
+        
+        Returns:
+            Dictionary with zombie summary data.
+        """
         zombie_files = []
         stale_files = []
         
@@ -204,14 +343,19 @@ class IncrementalZombieTracker:
                 stale_files.append(file_path)
         
         total_files = len(self.all_files)
+        estimated_functions = total_files * 5
+        estimated_zombies = len(zombie_files) * 2
         
         return {
             "total_files": total_files,
+            "total_functions": estimated_functions,
             "zombie_files": len(zombie_files),
+            "zombie_functions": estimated_zombies,
             "stale_files": len(stale_files),
             "zombie_file_paths": zombie_files[:20],
-            "zombie_rate": (len(zombie_files) / total_files * 100) if total_files > 0 else 0,
+            "zombie_rate": (estimated_zombies / estimated_functions * 100) if estimated_functions > 0 else 0,
             "days_threshold": self.days_threshold,
+            "is_baseline_based": False,
         }
     
     def get_file_modification_stats(self) -> Dict[str, Dict]:
@@ -225,8 +369,18 @@ class IncrementalZombieTracker:
             result[file_path] = {
                 "last_modified": self.file_last_modified.get(file_path),
                 "commit_count": self.file_commit_count.get(file_path, 0),
+                "function_count": self._file_function_count.get(file_path, 0),
+                "zombie_function_count": self._file_zombie_count.get(file_path, 0),
             }
         return result
+    
+    def get_zombie_functions_list(self) -> List:
+        """Get the list of zombie functions from baseline analysis.
+        
+        Returns:
+            List of zombie function info objects.
+        """
+        return list(self._baseline_zombie_functions)
 
 
 class ReplayAnalyzer:
@@ -256,7 +410,10 @@ class ReplayAnalyzer:
         
         self.extractor = GitDataExtractor(repo_path)
         self.ownership_tracker = IncrementalOwnershipTracker()
-        self.zombie_tracker = IncrementalZombieTracker(days_threshold)
+        self.zombie_tracker = IncrementalZombieTracker(
+            days_threshold=days_threshold,
+            repo_path=repo_path,
+        )
         self.metrics_calc = MetricsCalculator()
         
         self.commits: List[GitCommit] = []
@@ -291,6 +448,8 @@ class ReplayAnalyzer:
         """
         if not self._is_loaded:
             self.load_commits()
+        
+        self.zombie_tracker.load_baseline()
         
         self.snapshots = []
         
@@ -367,13 +526,13 @@ class ReplayAnalyzer:
                 concentration, num_authors
             )
             
-            total_files = zombie_summary.get("total_files", 1)
-            zombie_files = zombie_summary.get("zombie_files", 0)
+            total_functions = zombie_summary.get("total_functions", 1)
+            zombie_functions = zombie_summary.get("zombie_functions", 0)
             zombie_rate = zombie_summary.get("zombie_rate", 0)
             
             zombie_score = self.metrics_calc.calculate_zombie_score(
-                total_files * 5,
-                zombie_files * 3,
+                total_functions,
+                zombie_functions,
             )
             
             metrics: Dict[str, MetricScore] = {

@@ -567,14 +567,48 @@ def replay_cmd(
             lines.append("")
             
             zombie = state.zombie_summary or {}
+            is_baseline = zombie.get('is_baseline_based', False)
+            
             lines.append(f"  {ANSI_BOLD}💀 Zombie Code (>{days} days stale):{ANSI_RESET}")
-            zombie_count = zombie.get('zombie_files', 0)
-            zombie_rate = zombie.get('zombie_rate', 0)
-            zombie_color = ANSI_GREEN if zombie_rate < 10 else (ANSI_YELLOW if zombie_rate < 30 else ANSI_RED)
-            lines.append(
-                f"    Zombie files: {zombie_color}{zombie_count}{ANSI_RESET}  "
-                f"({zombie_color}{zombie_rate:.1f}%{ANSI_RESET} of total)"
-            )
+            
+            if is_baseline:
+                total_funcs = zombie.get('total_functions', 0)
+                zombie_funcs = zombie.get('zombie_functions', 0)
+                zombie_rate = zombie.get('zombie_rate', 0)
+                zombie_files = zombie.get('zombie_files', 0)
+                
+                zombie_color = ANSI_GREEN if zombie_rate < 10 else (ANSI_YELLOW if zombie_rate < 30 else ANSI_RED)
+                
+                lines.append(
+                    f"    {ANSI_BRIGHT_BLACK}[Function-level analysis]{ANSI_RESET}"
+                )
+                lines.append(
+                    f"    Total functions: {total_funcs:,}  |  "
+                    f"Zombie functions: {zombie_color}{zombie_funcs}{ANSI_RESET}"
+                )
+                lines.append(
+                    f"    Files with zombies: {zombie_files}  |  "
+                    f"Zombie rate: {zombie_color}{zombie_rate:.1f}%{ANSI_RESET}"
+                )
+            else:
+                zombie_count = zombie.get('zombie_files', 0)
+                zombie_rate = zombie.get('zombie_rate', 0)
+                zombie_funcs = zombie.get('zombie_functions', 0)
+                total_funcs = zombie.get('total_functions', 0)
+                
+                zombie_color = ANSI_GREEN if zombie_rate < 10 else (ANSI_YELLOW if zombie_rate < 30 else ANSI_RED)
+                
+                lines.append(
+                    f"    {ANSI_BRIGHT_BLACK}[Estimated - run full scan for accurate data]{ANSI_RESET}"
+                )
+                lines.append(
+                    f"    Estimated functions: {total_funcs:,}  |  "
+                    f"Zombie files: {zombie_color}{zombie_count}{ANSI_RESET}"
+                )
+                lines.append(
+                    f"    Estimated zombie rate: {zombie_color}{zombie_rate:.1f}%{ANSI_RESET}"
+                )
+            
             lines.append("")
             
             health = state.health_report

@@ -22,6 +22,7 @@ class AuthorCollaboration:
     shared_files: int
     shared_commits: int
     collaboration_score: float
+    shared_file_list: List[str] = field(default_factory=list)
     
     def get_pair_key(self) -> Tuple[str, str]:
         """Get a normalized key for this collaboration pair.
@@ -155,6 +156,7 @@ class CollaborationAnalyzer:
                         shared_files=len(shared),
                         shared_commits=shared_commits,
                         collaboration_score=score,
+                        shared_file_list=list(shared),
                     )
                     
                     collaborations[collab.get_pair_key()] = collab
@@ -436,12 +438,23 @@ class ASCIINetworkRenderer:
                 strength = int(collab.collaboration_score / max_score * 10) if max_score > 0 else 0
                 bar = "█" * strength + "░" * (10 - strength)
                 
+                lines.append("")
                 lines.append(
                     f"    {color1}{collab.author1:<15}{self.ANSI_RESET} "
                     f"{self.ANSI_BRIGHT_BLACK}⟷{self.ANSI_RESET} "
                     f"{color2}{collab.author2:<15}{self.ANSI_RESET} "
                     f"[{bar}] {collab.shared_files} files, {collab.shared_commits} commits"
                 )
+                
+                if collab.shared_file_list:
+                    lines.append(f"    {self.ANSI_BRIGHT_BLACK}    Shared files:{self.ANSI_RESET}")
+                    for i, file_path in enumerate(collab.shared_file_list[:5]):
+                        display_path = file_path
+                        if len(display_path) > 50:
+                            display_path = "..." + display_path[-47:]
+                        lines.append(f"      {self.ANSI_CYAN}•{self.ANSI_RESET} {display_path}")
+                    if len(collab.shared_file_list) > 5:
+                        lines.append(f"      {self.ANSI_BRIGHT_BLACK}... and {len(collab.shared_file_list) - 5} more files{self.ANSI_RESET}")
         
         return "\n".join(lines)
     
